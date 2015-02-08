@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>StereoAnalyserNode</title>
+  <link rel="stylesheet" href="//fonts.googleapis.com/css?family=Source+Sans+Pro">
+  <link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/bootstrap/3.2.0/css/bootstrap.min.css">
+  <link rel="stylesheet" href="//cdnjs.cloudflare.com/ajax/libs/prettify/r298/prettify.min.css">
+  <style>
+    body { font-family: "Source Sans Pro", sans-serif }
+    canvas { width: 100%; height: 240px; background: black }
+    hr { border: none }
+    #app { margin: 10px 0 }
+    #app .btn { width: 100px }
+    .prettyprint { padding: 0; margin: 0; background: white; border: none !important }
+  </style>
+  <script src="//cdn.jsdelivr.net/es6-promise/1.0.0/promise.min.js"></script>
+  <script src="//cdnjs.cloudflare.com/ajax/libs/underscore.js/1.7.0/underscore-min.js"></script>
+  <script src="//cdnjs.cloudflare.com/ajax/libs/vue/0.11.4/vue.min.js"></script>
+  <script src="//cdnjs.cloudflare.com/ajax/libs/prettify/r298/prettify.min.js"></script>
+  <script src="//mohayonao.github.io/stereo-analyser-node/build/stereo-analyser-node.js"></script>
+  <script src="build/audio-worker-node.js"></script>
+</head>
+<body>
+  <div class="container">
+    <div id="app">
+      <div class="page-header">
+        <h1>AudioWorkerNode</h1>
+        <div>
+          <a href="https://github.com/mohayonao/audio-worker-node"><img src="http://img.shields.io/badge/repository-GitHub-blue.svg?style=flat-square"></a>
+          <a href="https://travis-ci.org/mohayonao/audio-worker-node"><img src="http://img.shields.io/travis/mohayonao/audio-worker-node.svg?style=flat-square"></a>
+          <a href="https://www.npmjs.org/package/audio-worker-node"><img src="http://img.shields.io/npm/v/audio-worker-node.svg?style=flat-square"></a>
+          <a href="http://bower.io/search/?q=audio-worker-node"><img src="http://img.shields.io/bower/v/audio-worker-node.svg?style=flat-square"></a>
+          <a href="http://mohayonao.mit-license.org/"><img src="http://img.shields.io/badge/license-MIT-brightgreen.svg?style=flat-square"></a>
+        </div>
+      </div>
+      <div class="row">
+        <div class="col-md-4">
+          <button class="btn btn-default" v-on="click: toggle">{{ !audioBuffer ? "Loading.." : isPlaying ? "Stop" : "Start" }}</button>
+          <h5>Parameters</h5>
+          <div class="form-group">
+            <label>Bits: </label> <span>{{bits}}</span>
+            <input type="range" name="bits" min="0" max="9" value="3" v-on="input: input">
+          </div>
+          <div class="form-group">
+            <label>FrequencyReduction: </label> <span>{{frequencyReduction.toFixed(3)}}</span>
+            <input type="range" name="frequencyReduction" value="50" v-on="input: input">
+          </div>
+        </div>
+        <div class="col-md-4">
+          <canvas id="canvasL"></canvas>
+        </div>
+        <div class="col-md-4">
+          <canvas id="canvasR"></canvas>
+        </div>
+      </div>
+      <hr>
+      <div class="panel panel-default">
+        <div class="panel-heading">
+          <h3 class="panel-title">example</h3>
+        </div>
+        <div class="panel-body">
+          <pre class="prettyprint" id="code"></pre>
+        </div>
+      </div>
+      <div class="panel panel-default">
+        <div class="panel-heading">
+          <h3 class="panel-title">bitcrusher_worker.js</h3>
+        </div>
+        <div class="panel-body">
+          <pre class="prettyprint" id="bitcrusher_worker"></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+  var AudioContext = window.AudioContext || window.webkitAudioContext;
+  var $ = document.getElementById.bind(document);
+  var visualiser;
+
+  function fetch(url) {
+    return new Promise(function(resolve, reject) {
+      var xhr = new XMLHttpRequest();
+      if (url.indexOf(".mp3") !== -1) {
+        xhr.responseType = "arraybuffer";
+      }
+      xhr.open("GET", url);
+      xhr.onload = function() {
+        resolve({
+          text: function() {
+            return xhr.response;
+          },
+          arrayBuffer: function() {
+            return xhr.response;
+          }
+        });
+      };
+      xhr.onerror = reject;
+      xhr.send();
+    });
+  }
+  </script>
+  <script id="example">
+  var audioContext = new AudioContext();
+  var app = {};
+
+  // audio from YouTube Audio Library
+  fetch("audio/Cig Swaag.mp3").then(function(res) {
+    return new Promise(function(resolve, reject) {
+      audioContext.decodeAudioData(res.arrayBuffer(), resolve, reject);
+    })
+  }).then(function(audioBuffer) {
+    app.audioBuffer = audioBuffer;
+  });
+
+  var bufferSource, bitcrusherNode;
+
+  function start() {
+    bufferSource = audioContext.createBufferSource();
+
+    bufferSource.buffer = app.audioBuffer;
+    bufferSource.start(audioContext.currentTime);
+    bufferSource.onended = function() {
+      app.stop();
+    };
+
+    // Bitcrusher Node
+    bitcrusherNode = new AudioWorkerNode(audioContext, "bitcrusher_worker.js", 1, 1);
+    // Custom parameter - number of bits to crush down to - default 8
+    bitcrusherNode.addParameter("bits", 8);
+    // Custom parameter - frequency reduction, 0-1, default 0.5
+    bitcrusherNode.addParameter("frequencyReduction", 0.5);
+
+    bitcrusherNode.bits.value = app.bits;
+    bitcrusherNode.frequencyReduction.value = app.frequencyReduction;
+
+    bufferSource.connect(bitcrusherNode);
+    bitcrusherNode.connect(visualiser);
+  }
+
+  function stop() {
+    bufferSource.stop(audioContext.currentTime);
+    bufferSource.disconnect();
+    bitcrusherNode.disconnect();
+  }
+
+  function updateParameters(bits, frequencyReduction) {
+    bitcrusherNode.bits.value = bits;
+    bitcrusherNode.frequencyReduction.setTargetAtTime(frequencyReduction, audioContext.currentTime, 0.1);
+  }
+  </script>
+  <script>
+  window.addEventListener("load", function() {
+    "use strict";
+
+    var fftSize = 2048;
+    var arrayL = new Float32Array(fftSize);
+    var arrayR = new Float32Array(fftSize);
+
+    function initVisualiser() {
+      visualiser = new StereoAnalyserNode(audioContext);
+      visualiser.fftSize = fftSize;
+      visualiser.connect(audioContext.destination);
+    }
+
+    function animate() {
+      visualiser.getFloatTimeDomainData(arrayL, arrayR);
+      app.drawTimeDomainData(arrayL, arrayR);
+
+      if (app.isPlaying) {
+        requestAnimationFrame(animate);
+      }
+    }
+
+    function initCanvas(name) {
+      var canvas = $(name);
+
+      canvas.width = 1024;
+      canvas.height = 200;
+      canvas.context = canvas.getContext("2d");
+
+      canvas.context.fillStyle = "rgba(0, 0, 0, 0.5)";
+      canvas.context.strokeStyle = "#2ecc71";
+
+      return canvas;
+    }
+
+    var canvasL = initCanvas("canvasL");
+    var canvasR = initCanvas("canvasR");
+
+    function clear(canvas) {
+      canvas.context.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    function drawTimeDomainData(canvas, array) {
+      var context = canvas.context;
+
+      var height = canvas.height;
+      var dx = canvas.width / array.length;
+
+      context.beginPath();
+      for (var i = 0; i < array.length; i++) {
+        var x = Math.round(i * dx);
+        var y = Math.round((array[i] * height + height) * 0.5);
+        context.lineTo(x, y);
+      }
+      context.stroke();
+    }
+
+    app = new Vue({
+      el: "#app",
+      data: {
+        audioBuffer: null,
+        isPlaying: false,
+        bits: 8,
+        frequencyReduction: 0.5,
+      },
+      methods: {
+        toggle: function() {
+          if (this.audioBuffer) {
+            if (this.isPlaying) {
+              this.stop();
+            } else {
+              this.start();
+            }
+          }
+        },
+        start: function() {
+          if (!this.isPlaying) {
+            this.isPlaying = true;
+            if (!visualiser) {
+              initVisualiser();
+            }
+            start();
+            requestAnimationFrame(animate);
+          }
+        },
+        stop: function() {
+          if (this.isPlaying) {
+            this.isPlaying = false;
+            stop();
+          }
+        },
+        input: _.throttle(function(e) {
+          switch (e.target.name) {
+          case "bits":
+            this.bits = Math.pow(2, e.target.value);
+            break;
+          case "frequencyReduction":
+            this.frequencyReduction = e.target.value * 0.01;
+            break;
+          }
+          if (bitcrusherNode) {
+            updateParameters(this.bits, this.frequencyReduction);
+          }
+        }, 100),
+        drawTimeDomainData: function(arrayL, arrayR) {
+          clear(canvasL);
+          drawTimeDomainData(canvasL, arrayL);
+          clear(canvasR);
+          drawTimeDomainData(canvasR, arrayR);
+        }
+      }
+    });
+
+    // code
+    $("code").textContent = $("example").textContent;
+    fetch("bitcrusher_worker.js").then(function(res) {
+      $("bitcrusher_worker").textContent = res.text();
+    }).then(prettyPrint);
+  });
+  </script>
+</body>
+</html>
