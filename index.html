@@ -99,6 +99,16 @@
       xhr.send();
     });
   }
+
+  if (!AnalyserNode.prototype.getFloatTimeDomainData) {
+    AnalyserNode.prototype.getFloatTimeDomainData = function(array) {
+      var uint8 = new Uint8Array(array.length);
+      this.getByteTimeDomainData(uint8);
+      for (var i = 0, imax = uint8.length; i < imax; i++) {
+        array[i] = (uint8[i] - 128) / 128;
+      }
+    };
+  }
   </script>
   <script id="example">
   var audioContext = new AudioContext();
@@ -168,7 +178,9 @@
       app.drawTimeDomainData(arrayL, arrayR);
 
       if (app.isPlaying) {
-        requestAnimationFrame(animate);
+        setTimeout(function() {
+          requestAnimationFrame(animate);
+        }, 50);
       }
     }
 
